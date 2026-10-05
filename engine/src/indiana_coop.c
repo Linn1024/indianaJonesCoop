@@ -55,6 +55,7 @@ typedef struct {uint8_t pending,items[2][10];} InventoryTransfer;
 static InventoryTransfer inventory_transfer;
 typedef struct {uint8_t valid,stage,x,y,pending;} DoorReturn;
 static DoorReturn door_return;
+static struct {uint16_t x;uint8_t active,stage,y;} cave_exit;
 typedef struct {uint8_t active,owner,partner;} Stone;
 static Stone stone;
 static struct {uint8_t active,y[4],x[4];} platform_view;
@@ -76,9 +77,17 @@ static void motorcycle_pairs(void){
   for(j=5;j>0;j--)if(!RAM[0x514+16*(j-1)])break;
   if(!j)break;
   j--;memcpy(RAM+0x514+16*j,RAM+0x514+16*i,16);
-  RAM[0x517+16*j]=0;RAM[0x51d+16*j]=1;
-  RAM[0x519+16*j]=clamp(RAM[0x519+16*i]+32,16,224);
+  RAM[0x515+16*j]=1;RAM[0x517+16*j]=0;RAM[0x51d+16*j]=1;
+  RAM[0x519+16*j]=clamp(RAM[0x519+16*i]+(RAM[0x519+16*i]<=192?32:-40),16,224);
   motorcycles.owner[j]=2;motorcycles.pending[i]=0;
+ }
+ /* Copies made before native pickup initialization can retain facing 2,
+  * whose parked-bike frame is empty. Repair these in existing saves too. */
+ for(j=0;j<5;j++)if(motorcycles.owner[j]==2&&RAM[0x514+16*j]==0xc0){
+  RAM[0x515+16*j]=1;
+  for(i=0;i<5;i++)if(motorcycles.owner[i]==1&&RAM[0x514+16*i]==0xc0&&
+     abs(RAM[0x519+16*j]-RAM[0x519+16*i])<32)
+   RAM[0x519+16*j]=clamp(RAM[0x519+16*i]+(RAM[0x519+16*i]<=192?32:-40),16,224);
  }
 }
 static void motorcycle_graphics(unsigned bank){
@@ -108,6 +117,14 @@ static void preserve_inventory(void){
  inventory_transfer.pending=1;
 }
 static const uint16_t shared_addresses[]={0x78,0x9e,0x566,0x56c,0xf5,0xf7,0xec,0x9b};
+static void transition_whip(void){
+ /* These native story exits explicitly equip the whip. Apply the same
+  * weapon change to both inventories, including an already queued transfer. */
+ preserve_inventory();
+ if(RAM[0xa0]==19||RAM[0xa0]==20)return;
+ if(inventory_transfer.pending)inventory_transfer.items[0][0]=inventory_transfer.items[1][0]=1;
+ RAM[0x82]=c.p1.v[0x82]=c.p2.v[0x82]=1;
+}
 static void range(unsigned a,unsigned b){while(a<=b)addresses[address_count++]=(uint16_t)a++;}
 static void capture(Player *p){unsigned i;for(i=0;i<address_count;i++)if(addresses[i]!=0x79||deaths.individual)p->v[addresses[i]]=RAM[addresses[i]];}
 static void install(const Player *p){unsigned i;for(i=0;i<address_count;i++)if(addresses[i]!=0x79||deaths.individual)RAM[addresses[i]]=p->v[addresses[i]];}
@@ -251,6 +268,7 @@ static void level_outfits(void){
 }
 static void prepare_area(void){
  unsigned i;
+ if(cave_exit.stage!=RAM[0xa0])cave_exit.active=0;
  memset(&lift_context,0,sizeof(lift_context));
  memset(&flight,0,sizeof(flight));
  grabbed_player=0;
@@ -271,7 +289,7 @@ static void prepare_area(void){
  preserve_inventory();reset_players();area_stage=RAM[0xa0];
 }
 void ij_close(void){ij_loaded=ij_extra_cycles=0;noclip=0;memset(&c,0,sizeof(c));}
-void ij_prepare_load(void){memset(&lift_context,0,sizeof(lift_context));memset(&flight,0,sizeof(flight));memset(&grab_drawing,0,sizeof(grab_drawing));grabbed_player=0;memset(&safe_ground,0,sizeof(safe_ground));memset(&motorcycles,0,sizeof(motorcycles));transition_hidden=0;memset(&platform_view,0,sizeof(platform_view));memset(&stone,0,sizeof(stone));area_stage=255;noclip=0;ij_extra_cycles=0;menu_open=menu_selected=menu_previous=0;start_menu=0;memset(&door_return,0,sizeof(door_return));memset(&inventory_transfer,0,sizeof(inventory_transfer));memset(&deaths,0,sizeof(deaths));deaths.individual=2;}
+void ij_prepare_load(void){memset(&cave_exit,0,sizeof(cave_exit));memset(&lift_context,0,sizeof(lift_context));memset(&flight,0,sizeof(flight));memset(&grab_drawing,0,sizeof(grab_drawing));grabbed_player=0;memset(&safe_ground,0,sizeof(safe_ground));memset(&motorcycles,0,sizeof(motorcycles));transition_hidden=0;memset(&platform_view,0,sizeof(platform_view));memset(&stone,0,sizeof(stone));area_stage=255;noclip=0;ij_extra_cycles=0;menu_open=menu_selected=menu_previous=0;start_menu=0;memset(&door_return,0,sizeof(door_return));memset(&inventory_transfer,0,sizeof(inventory_transfer));memset(&deaths,0,sizeof(deaths));deaths.individual=2;}
 void ij_finish_load(void){
  if(c.has_p2&&c.phase==0&&!transition_hidden)level_outfits();
  /* Old noclip saves may have cancelled the animation but retained its lock. */
@@ -315,6 +333,7 @@ int ij_extra_work(uint16_t pc){
  return c.phase==2||flight.hit==2||c.damage==2||c.attack==2||c.object_prepared;
 }
 void ij_init(void){
+ memset(&cave_exit,0,sizeof(cave_exit));
  memset(&lift_context,0,sizeof(lift_context));
  memset(&flight,0,sizeof(flight));
  grabbed_player=0;
@@ -352,6 +371,7 @@ void ij_init(void){
  AddExState(&inventory_transfer,sizeof(inventory_transfer),0,"IJIV");
  AddExState(&deaths,sizeof(deaths),0,"IJDM");
  AddExState(&door_return,sizeof(door_return),0,"IJDR");
+ AddExState(&cave_exit,sizeof(cave_exit),0,"IJCE");
  AddExState(&stone,sizeof(stone),0,"IJSN");
  AddExState(&platform_view,sizeof(platform_view),0,"IJPV");
  AddExState(&transition_hidden,1,0,"IJVH");
@@ -397,6 +417,19 @@ static void composite(void){
 uint16_t ij_instruction(uint16_t pc){
  unsigned i; int dx,dy,left,right,focus,delta;
  if(!ij_loaded||!c.enabled)return pc;
+ if(c.has_p2&&pc>=0x8000&&pc<0xc000){
+  unsigned bank=RAM[pc<0xa000?0xe2:0xe3],offset=pc&0x1fff;
+  /* Every switchable-bank LDA $04BF is a native enemy time-stop check.
+   * Evaluate the shared effect without copying the collector's timer into
+   * the other inventory. Adjust its result after the load so its CPU cycles
+   * remain native. Fixed-bank countdown/HUD reads remain per-player. */
+  if(bank<16&&offset>=3&&ROM[bank*8192+offset-3]==0xad&&
+     ROM[bank*8192+offset-2]==0xbf&&ROM[bank*8192+offset-1]==4){
+   unsigned timer=other()->v[0x4bf];
+   X.A=RAM[0x4bf]>timer?RAM[0x4bf]:timer;
+   X.P=(X.P&0x7d)|(X.A?0:2)|(X.A&128);
+  }
+ }
  if((RAM[0xa0]==19||RAM[0xa0]==20)&&RAM[0xe2]==10){uint16_t next=flight_instruction(pc);if(next!=pc)return next;}
  if(warp_pending){
   warp_pending=0;RAM[0xa0]=menu_level;RAM[0xa3]=RAM[0xa6]=RAM[0x9a]=0;
@@ -419,7 +452,23 @@ uint16_t ij_instruction(uint16_t pc){
   }break;
  case 0xad07:if(RAM[0xe2]==10&&RAM[0xa0]==18)grabbed_player=c.object_active?2:1;break;
  case 0xae31:if(RAM[0xe2]==10&&RAM[0xa0]==18)grabbed_player=0;break;
- case 0xc4e3:motorcycle_pairs();break;
+ case 0xc4e3:
+  motorcycle_pairs();
+  if(cave_exit.active&&RAM[0xa0]==cave_exit.stage){
+   for(i=0;i<80;i+=16)if(RAM[0x514+i]==0xba){
+    int x=RAM[0x9d]*256+RAM[0x9a]+RAM[0x519+i]-(int8_t)RAM[0x9e];
+    int y=RAM[0x518+i]-(int8_t)RAM[0x566]+RAM[0x9b];
+    if(abs(x-cave_exit.x)<=24&&abs(y-cave_exit.y)<=32){
+     /* Reloading the outside map recreates its entrance boulder. Treat
+      * just that obstacle as cleared, using the native spawn bitmap so
+      * scrolling away and back cannot recreate it again. */
+     unsigned source=RAM[0x483+i];
+     if(source<64)RAM[(i<32?0x504:0x50c)+source/8]|=1<<(source&7);
+     RAM[0x514+i]=0;cave_exit.active=0;
+    }
+   }
+  }
+  break;
  case 0xa2d5:if(RAM[0xe2]==0&&RAM[0x45]==1&&c.has_p2&&X.X<80&&motorcycles.owner[X.X/16])return 0xa2e3;break;
  case 0xc59f:
   grab_drawing.active=grabbed_player==2&&RAM[0xa0]==18&&X.X<32&&RAM[0x514+X.X]==0x6a&&
@@ -489,6 +538,9 @@ uint16_t ij_instruction(uint16_t pc){
   if(RAM[0xe2]==12&&c.has_p2){
    door_return.pending=1;
    if(door_return.valid&&door_return.stage==RAM[0xa0]){RAM[0xa4]=door_return.x;RAM[0xa5]=door_return.y;}
+   cave_exit.active=1;cave_exit.stage=RAM[0xa0];
+   cave_exit.x=(RAM[0xa3]-1)*256+RAM[0x9a]+RAM[0xa4];
+   cave_exit.y=RAM[0xa5]+RAM[0xa6];
   }break;
  case 0xc1e1:prepare_area();break;
  case 0x9b88:case 0x9bd9:
@@ -502,11 +554,23 @@ uint16_t ij_instruction(uint16_t pc){
  case 0x9be6:if(RAM[0xe2]==12&&deaths.individual&&c.has_p2)return individual_death();break;
  case 0x8000:
   if(RAM[0xe2]==12&&deaths.individual&&deaths.out[c.phase==2?1:0]&&(c.phase==1||c.phase==2)){RAM[0x78]=0;return 0xc426;}break; /* Native RTS: let the 861D hook run next. */
- case 0xea11:if(c.has_p2){preserve_inventory();return 0xea1d;}break;
- case 0xe649:if(c.has_p2){preserve_inventory();return 0xc1ba;}break;
+ case 0xea11:if(c.has_p2){transition_whip();return 0xea1d;}break;
+ case 0xe649:if(c.has_p2){transition_whip();return 0xc1ba;}break;
+ case 0xa69e:
+  if(RAM[0xe2]==0&&(c.has_p2||inventory_transfer.pending))transition_whip();
+  break;
  case 0xe7e3:preserve_inventory();break; /* Story sequence temporarily equips a sword/hat. */
  case 0xc15c:if(c.has_p2&&!(RAM[0xf0]&3)&&c.p2.v[0x4bf])c.p2.v[0x4bf]--;break;
  case 0xc0e6:if(c.active)c.paused=1;break;
+ case 0xdba3:
+  /* The generic HUD's weapon slot shares flight's bomb tiles. Its normal
+   * inventory value (whip=1) must never impersonate equipped plane bombs. */
+  if(flight.active&&(RAM[0xa0]==19||RAM[0xa0]==20)){X.A=RAM[0x60d]?1:0;X.Y=0;}
+  break;
+ case 0xdbda:case 0xdbff:
+  /* Native flight equipment updates own the other two armor slots. */
+  if(flight.active&&(RAM[0xa0]==19||RAM[0xa0]==20))return popreturn();
+  break;
  case 0xe18b:RAM[0x4bd]=0x4a;break;
  case 0xe1a8:RAM[0x4bd]=0x4c;break;
  case 0xc100:c.paused=0;break;
@@ -545,6 +609,13 @@ uint16_t ij_instruction(uint16_t pc){
    if((ret>=0xdf85&&ret<=0xdfaa)||ret==0xdefd)break;
    /* Vehicle mounting is a contact query for its assigned rider. */
    if(RAM[0xe2]==0&&ret>=0xa364&&ret<=0xa3db)break;
+   if(RAM[0xe2]==0){
+    unsigned caller=RAM[0x100+(uint8_t)(X.S+3)]|(RAM[0x100+(uint8_t)(X.S+4)]<<8);
+    /* The bottom row of the mounting rectangle tail-calls E42F. Its
+     * nested EA61 calls return into that shared helper, and its last
+     * point returns straight to A32C. These are still pickup queries. */
+    if(ret==0xa32b||((ret==0xe432||ret==0xe43e||ret==0xe44a||ret==0xe456)&&caller==0xa32b))break;
+   }
   }
   if(c.has_p2&&c.phase==0&&!c.damage){capture(&c.damage_player);c.damage_entry=regs();c.damage=1;}break;
  case 0xeab2:case 0xeb0b:

@@ -1,5 +1,10 @@
 /* Native flight player passes; scrolling/enemy updates remain single-pass. */
-static void plane_capture(Plane *p){memcpy(p->zp,RAM+0x36,10);memcpy(p->stats,RAM+0x160,4);memcpy(p->local,RAM+0x600,16);}
+static void plane_capture(Plane *p){
+ memcpy(p->zp,RAM+0x36,10);memcpy(p->stats,RAM+0x160,4);memcpy(p->local,RAM+0x600,16);
+ /* $049E is the shared flight objective, not each pilot's coin balance.
+  * Carry native decrements across both player and collision replays. */
+ if(flight.active)c.p1.v[0x49e]=c.p2.v[0x49e]=RAM[0x49e];
+}
 static void plane_install(const Plane *p){memcpy(RAM+0x36,p->zp,10);memcpy(RAM+0x160,p->stats,4);memcpy(RAM+0x600,p->local,16);}
 static uint16_t flight_finish(void){
  unsigned i;
@@ -21,18 +26,31 @@ static uint16_t flight_instruction(uint16_t pc){
  switch(pc){
  case 0x8007:
   if(!flight.active){
+   unsigned remaining=RAM[0x49e];
    capture(&c.p2);plane_capture(&flight.p2);
    flight.p2.zp[0]=clamp(RAM[0x36]+(RAM[0x36]>128?-40:40),54,208);
    flight.p2.stats[3]=flight.p2.local[9]=0;flight.p2.local[12]=2;
    flight.p2.zp[2]=32;flight.p2.zp[4]=flight.p2.zp[6]=flight.p2.zp[8]=240;
    if(deaths.pending){RAM[0x79]=deaths.lives[0];c.p2.v[0x79]=deaths.lives[1];deaths.pending=0;}
    if(inventory_transfer.pending){
+    if(RAM[0xa0]==19){
+     RAM[0x162]=inventory_transfer.items[0][7];
+     flight.p2.stats[2]=inventory_transfer.items[1][7];
+    }
     for(i=0;i<10;i++){unsigned a=inventory_addresses[i];RAM[a]=inventory_transfer.items[0][i];c.p2.v[a]=inventory_transfer.items[1][i];}
     inventory_transfer.pending=0;
    }
+   RAM[0x49e]=c.p2.v[0x49e]=remaining;
    flight.active=c.has_p2=1;transition_hidden=0;
   }
   c.active=1;c.paused=0;c.ticks++;c.phase=0;break;
+ case 0x8f51:
+  /* After the last flight section the same byte becomes coins again. */
+  if(flight.active)c.p2.v[0x49e]=flight.p2.stats[2];
+  break;
+ case 0x8f5a:
+  if(flight.active)transition_whip();
+  break;
  case 0x8043:
   if(c.phase!=2)c.phase=1;
   if(deaths.individual&&deaths.out[c.phase==2?1:0])return flight_finish();break;
@@ -58,6 +76,11 @@ static uint16_t flight_instruction(uint16_t pc){
    break;
   }
   if(flight.hit==1){
+   /* P1 destroying the enemy selects its death script. Replaying the old
+    * collision script would overwrite that selection and lose the kill. */
+   if(flight.hit_entry==0x871e&&(RAM[0x25]!=flight.scratch[0x25]||RAM[0x26]!=flight.scratch[0x26])){
+    flight.hit=0;break;
+   }
    capture(&c.p1);plane_capture(&flight.p1);flight.result_regs=regs();memcpy(flight.result,RAM,54);
    install(&c.p2);plane_install(&flight.p2);memcpy(RAM,flight.scratch,54);restore(flight.entry_regs);
    flight.hit=2;return flight.hit_entry;

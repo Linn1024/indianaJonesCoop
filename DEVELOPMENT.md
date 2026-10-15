@@ -1,5 +1,7 @@
 # Native core development
 
+Shared workflow: [common co-op development guide](../coop-guides/COOP-DEVELOPMENT.md).
+
 ## Build
 
 Requires Windows x64 and a 64-bit MinGW-w64 toolchain (`gcc`, `g++`, `mingw32-make`).

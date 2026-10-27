@@ -102,3 +102,19 @@ Vertical co-op framing eases toward a 96?128 pixel center band, ignores dying/OU
 Old saves can retain a consumed platform-spawn cursor and an erased active bit from the former per-player platform state. On load, stages 3/5 recover only already-passed nearby platform entries whose inactive base coordinates are invalid/off-screen, using native ROM placement, heights and initial timing. Active platforms and inventories are untouched; QS1 verifies both players landing and subsequent deterministic replay.
 
 Vertical tracking keeps the 2-pixel idle correction but allows up to 12 pixels per frame while a live player is airborne. The falling-camera QS1 regression isolates scrolling from upper-ledge spike damage using invincibility (pit deaths remain enabled), and verifies both players reach the lower floor without losing lives.
+
+### Portable standalone startup and settings
+
+coop_desktop.h implements the shared ROM picker, Unicode remembered ROM path,
+per-user settings, screen-size/fullscreen menu and settings-folder shortcut.
+The original ROM bytes are validated before remembering a location; cancel
+exits normally and a missing/changed file returns to the picker. Engine loading
+uses the executable's absolute directory, while normal saves/settings use the
+per-user Linn1024Coop folder. Existing standalone saves/controls migrate without
+overwriting files already there. Test mode keeps isolated legacy diagnostics;
+--rom and --settings-dir allow automated checks without changing user settings.
+Keyboard/XInput configuration is available from Settings and F2. The source
+copy of coop_desktop.h matches coop-releases/desktop/coop_desktop.h. Build
+scripts link shell32 and comdlg32. verify_desktop.py in that repository drives
+real picker input, external Unicode paths, relaunch, controls, screen resizing,
+fullscreen and cancellation for all four games using isolated test folders.

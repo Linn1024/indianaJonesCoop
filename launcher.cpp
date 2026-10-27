@@ -13,6 +13,7 @@
 #include <string>
 #include <map>
 #include <algorithm>
+#include "coop_desktop.h"
 #include "engine/src/drivers/libretro/libretro-common/include/libretro.h"
 
 struct Core {
@@ -171,8 +172,10 @@ static bool loadSlot(){
  if(ok){core.status(state);cheatOpen=false;releaseActions=true;previousActions=0;if(audioDevice)waveOutReset(audioDevice);}
  message(ok?"Loaded slot "+std::to_string(slot):"No compatible save in slot "+std::to_string(slot));return ok;
 }
+static retro_game_info_ext desktopGameInfo{};
 static bool environment(unsigned cmd,void *data){
  switch(cmd){
+ case RETRO_ENVIRONMENT_GET_GAME_INFO_EXT: *(const retro_game_info_ext**)data=&desktopGameInfo;return desktopGameInfo.data!=nullptr;
  case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:*(const char**)data=".";return true;
  case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:format=*(unsigned*)data;return format==RETRO_PIXEL_FORMAT_XRGB8888;
  case RETRO_ENVIRONMENT_GET_VARIABLE:{auto*v=(retro_variable*)data;auto i=options.find(v->key);v->value=i==options.end()?nullptr:i->second.c_str();return v->value!=nullptr;}
@@ -187,7 +190,7 @@ static bool environment(unsigned cmd,void *data){
  }
 }
 static void video(const void *data,unsigned w,unsigned h,size_t pitch){
- if(!data)return;width=w;height=h;pixels.resize(w*h);for(unsigned y=0;y<h;y++)memcpy(pixels.data()+y*w,(const char*)data+y*pitch,w*4);
+ if(!data)return;width=w;height=h;coopdesktop::geometry(w,h);pixels.resize(w*h);for(unsigned y=0;y<h;y++)memcpy(pixels.data()+y*w,(const char*)data+y*pitch,w*4);
 }
 static size_t audioBatch(const int16_t*p,size_t n){sound.insert(sound.end(),p,p+n*2);return n;}
 static void audioSample(int16_t l,int16_t r){sound.push_back(l);sound.push_back(r);}
@@ -294,6 +297,7 @@ static void fullscreen(){
  else{SetWindowLongPtr(windowHandle,GWL_STYLE,WS_OVERLAPPEDWINDOW|WS_VISIBLE);SetWindowPos(windowHandle,nullptr,old.left,old.top,old.right-old.left,old.bottom-old.top,SWP_FRAMECHANGED|SWP_NOZORDER);}
 }
 static LRESULT CALLBACK windowProc(HWND w,UINT m,WPARAM a,LPARAM b){
+ if(coopdesktop::handle(w,m,a,b))return 0;
  switch(m){
  case WM_DESTROY:running=false;return 0;
  case WM_ERASEBKGND:return 1;
@@ -316,8 +320,9 @@ int main(int argc,char**argv){
  char path[MAX_PATH];GetModuleFileNameA(nullptr,path,MAX_PATH);char*slash=strrchr(path,'\\');if(slash){*slash=0;SetCurrentDirectoryA(path);}
  for(int i=1;i<argc;i++){if(!strcmp(argv[i],"--test")&&i+1<argc)testFrames=atoi(argv[++i]);if(!strcmp(argv[i],"--save-test"))testScenario=true;if(!strcmp(argv[i],"--ui-test"))uiTest=true;}
  CreateDirectoryA("diagnostics",nullptr);loadBindings();
- auto rom=readFile("Young Indiana Jones Chronicles, The (USA).nes");if(!correctRom(rom))return fail("The supported Young Indiana Jones Chronicles USA ROM is missing or changed.");
- core.dll=LoadLibraryA("engine\\fceumm_libretro.dll");if(!core.dll)return fail("Cannot load engine\\fceumm_libretro.dll. Rebuild or restore the native core.");
+ coopdesktop::init(L"IndianaCoop",L"Indiana Jones Co-op",testFrames!=0);loadBindings();
+ std::vector<unsigned char> rom;if(!coopdesktop::loadRom(rom,L"Young Indiana Jones Chronicles, The (USA).nes",correctRom))return coopdesktop::cancelled?0:fail("The selected ROM is missing or is not the supported original USA version.");
+ core.dll=coopdesktop::loadCore(L"engine\\fceumm_libretro.dll");if(!core.dll)return fail("Cannot load engine\\fceumm_libretro.dll. Rebuild or restore the native core.");
 #define LOAD(n) core.n=(decltype(core.n))GetProcAddress(core.dll,"retro_" #n);if(!core.n)return fail("Missing core export: " #n);
  LOAD(init);LOAD(run);LOAD(deinit);LOAD(unload_game);LOAD(reset);LOAD(set_environment);LOAD(set_video_refresh);LOAD(set_audio_sample);LOAD(set_audio_sample_batch);LOAD(set_input_poll);LOAD(set_input_state);LOAD(set_controller_port_device);LOAD(load_game);LOAD(get_system_av_info);LOAD(serialize_size);LOAD(serialize);LOAD(unserialize);
 #undef LOAD
@@ -325,7 +330,8 @@ int main(int argc,char**argv){
  LOAD(status);LOAD(cheat);LOAD(rejoin);LOAD(noclip);LOAD(death_mode);LOAD(level_choice);LOAD(level_current);
 #undef LOAD
  core.set_environment(environment);core.set_video_refresh(video);core.set_audio_sample(audioSample);core.set_audio_sample_batch(audioBatch);core.set_input_poll(inputPoll);core.set_input_state(inputState);core.init();
- retro_game_info game{"Young Indiana Jones Chronicles, The (USA).nes",rom.data(),rom.size(),nullptr};if(!core.load_game(&game))return fail("Cartridge load failed.");
+ desktopGameInfo.full_path=coopdesktop::romUtf8.c_str();desktopGameInfo.data=rom.data();desktopGameInfo.size=rom.size();desktopGameInfo.persistent_data=true;
+ retro_game_info game{coopdesktop::romUtf8.c_str(),rom.data(),rom.size(),nullptr};if(!core.load_game(&game))return fail("Cartridge load failed.");
  for(int p=0;p<2;p++)core.set_controller_port_device(p,RETRO_DEVICE_JOYPAD);
  core.status(state);if(!state[0])return fail("The co-op core did not recognize this cartridge.");
  retro_system_av_info av{};core.get_system_av_info(&av);
@@ -337,6 +343,7 @@ int main(int argc,char**argv){
   AppendMenuA(menu,MF_POPUP,(UINT_PTR)gameMenu,"Game");AppendMenuA(menu,MF_POPUP,(UINT_PTR)saveMenu,"Save slot");
   HMENU helpMenu=CreatePopupMenu();AppendMenuA(helpMenu,MF_STRING,6,"Download BizHawk...");AppendMenuA(menu,MF_POPUP,(UINT_PTR)helpMenu,"Help");
   windowHandle=CreateWindowA("IndianaCoop","Indiana Jones - Native Co-op",WS_OVERLAPPEDWINDOW|(testFrames?0:WS_VISIBLE),CW_USEDEFAULT,CW_USEDEFAULT,810,930,nullptr,menu,GetModuleHandle(nullptr),nullptr);
+  if(!testFrames)coopdesktop::attach(windowHandle,256,264,openControls);
   HMODULE xi=LoadLibraryA("xinput1_4.dll");if(!xi)xi=LoadLibraryA("xinput9_1_0.dll");if(xi)getPad=(GetPad)GetProcAddress(xi,"XInputGetState");
   WAVEFORMATEX wf{};wf.wFormatTag=WAVE_FORMAT_PCM;wf.nChannels=2;wf.nSamplesPerSec=(DWORD)av.timing.sample_rate;wf.wBitsPerSample=16;wf.nBlockAlign=4;wf.nAvgBytesPerSec=wf.nSamplesPerSec*4;
   if(!testFrames){if(waveOutOpen(&audioDevice,WAVE_MAPPER,&wf,0,0,CALLBACK_NULL)!=MMSYSERR_NOERROR)message("Audio device unavailable");timeBeginPeriod(1);}

@@ -12,7 +12,7 @@ try {
     & mingw32-make -C engine -f Makefile.libretro platform=win CC=gcc HAVE_HDPACK=0 HAVE_NTSC=0 WANT_32BPP=1 GIT_VERSION= -j8 -s
     if ($LASTEXITCODE) { throw 'Native core build failed' }
     if (-not $CoreOnly) {
-        & g++ launcher.cpp -o Indiana-Coop.exe -O2 -std=c++17 -static -mwindows -lwinmm -lgdi32 -luser32 -lbcrypt -lshell32
+        & g++ launcher.cpp -o Indiana-Coop.exe -O2 -std=c++17 -static -mwindows -lwinmm -lgdi32 -luser32 -lbcrypt -lshell32 -lcomdlg32
         if ($LASTEXITCODE) { throw 'Launcher build failed' }
     }
 } finally { $env:PATH=$oldPath; Pop-Location }

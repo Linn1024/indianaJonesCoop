@@ -22,6 +22,13 @@ standalone saves/controls are copied there once when upgrading without replacing
 newer user files. If the selected ROM is moved or deleted, choose it again.
 These settings apply to the standalone EXE; BizHawk retains its own settings.
 
+In **Settings > Controls**, **Controller** means an Xbox-compatible game controller.
+Every keyboard/controller binding has a **Clear** button. Save shortcuts can also
+be changed or cleared there: **F5 quicksave**, **F8 quickload**, **F6 next slot**,
+and **F7 previous slot** by default. There are **10 slots (1-10)**; next/previous
+wrap at the ends. The selected slot is remembered. The **Saves** menu selects a
+slot or saves/loads directly, and the controls window has Save now/Load now buttons.
+
 
 ## Building a fresh checkout
 
@@ -49,9 +56,9 @@ This build runs a modified NES emulator core, following the Aladdin project's ap
 | Rejoin grounded partner | Q | O | Y |
 | Pause / resume | Enter | | Start |
 
-**Press F2 or choose Game > Controls** to change keyboard and gamepad buttons. Click a binding, then press the replacement key/button. Changes are saved automatically to `controls.ini`. Controller 1 belongs to P1, controller 2 to P2. XInput controller hardware still needs hands-on testing.
+**Press F2 or choose Game > Controls** to change keyboard and gamepad buttons. Click a binding, then press the replacement key/button. Changes are saved automatically in the per-user `launcher.ini`. Clear removes a binding. Controller 1 belongs to P1, controller 2 to P2. XInput controller hardware still needs hands-on testing.
 
-F1 shows controls. **F5 saves** and **F8 loads** the selected slot; choose it in the **Save slot** menu. Alt+Enter toggles fullscreen.
+F1 shows controls. **F5 saves** and **F8 loads** the selected slot; choose it in the **Saves** menu, or use F6/F7 for next/previous. Alt+Enter toggles fullscreen.
 
 ## Pause cheats
 

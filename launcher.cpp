@@ -133,6 +133,7 @@ static LRESULT CALLBACK controlsProc(HWND w,UINT m,WPARAM a,LPARAM b){
  }return DefWindowProcA(w,m,a,b);
 }
 static void openControls(){
+ if(!testFrames){coopdesktop::openControls();return;}
  if(controlsWindow){SetForegroundWindow(controlsWindow);return;}
  if(audioDevice)waveOutReset(audioDevice);
  controlsWindow=CreateWindowA("IndianaControls","Indiana Co-op - Controls",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|(testFrames?0:WS_VISIBLE),
@@ -164,13 +165,13 @@ static bool saveSlot(){
  FILE *f=fopen(temp.c_str(),"wb");if(!f){message("Cannot write save file");return false;}
  bool ok=fwrite("IJCOOP2\0",1,8,f)==8&&fwrite(data.data(),1,data.size(),f)==data.size();ok=fclose(f)==0&&ok;
  if(ok)ok=MoveFileExA(temp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0;
- message(ok?"Saved slot "+std::to_string(slot):"Save failed");return ok;
+ message(ok?"Saved slot "+std::to_string(slot?slot:10):"Save failed");return ok;
 }
 static bool loadSlot(){
  std::string path=(testFrames?"diagnostics\\native-test-slot-":"saves\\slot-")+std::to_string(slot)+".ijstate";auto data=readFile(path.c_str());
  bool ok=data.size()>8&&!memcmp(data.data(),"IJCOOP2\0",8)&&core.unserialize(data.data()+8,data.size()-8);
  if(ok){core.status(state);cheatOpen=false;releaseActions=true;previousActions=0;if(audioDevice)waveOutReset(audioDevice);}
- message(ok?"Loaded slot "+std::to_string(slot):"No compatible save in slot "+std::to_string(slot));return ok;
+ message(ok?"Loaded slot "+std::to_string(slot?slot:10):"No compatible save in slot "+std::to_string(slot?slot:10));return ok;
 }
 static retro_game_info_ext desktopGameInfo{};
 static bool environment(unsigned cmd,void *data){
@@ -202,9 +203,7 @@ static void readInputs(){
  if(focused&&!testFrames)for(int p=0;p<2;p++){
   XINPUT_STATE s{};unsigned buttons=getPad&&getPad(p,&s)==ERROR_SUCCESS?s.Gamepad.wButtons:0;
   gamepadChord|=(buttons&(XINPUT_GAMEPAD_A|XINPUT_GAMEPAD_B))==(XINPUT_GAMEPAD_A|XINPUT_GAMEPAD_B);
-  for(int a=0;a<8;a++)if(keyDown(keys[p][a])||(buttons&gamepadKeys[p][a]))pads[p]|=1u<<retroIds[a];
-  if(s.Gamepad.sThumbLX< -14000)pads[p]|=1<<6;if(s.Gamepad.sThumbLX>14000)pads[p]|=1<<7;
-  if(s.Gamepad.sThumbLY< -14000)pads[p]|=1<<5;if(s.Gamepad.sThumbLY>14000)pads[p]|=1<<4;
+  pads[p]=coopdesktop::buttons(p);
  }
  if(testFrames){
   if(!state[1])pads[0]=(frameNumber%24==1?8:0)|(frameNumber%12==1?256:0);
@@ -273,7 +272,7 @@ static void paintFrame(HDC dc){
    drawText(dc,tx,ty+238,"Arrows: choose / change level    Jump: apply");drawText(dc,tx,ty+262,"Pause: resume    Esc: close cheats");
   }
  }
- drawText(dc,12,r.bottom-24,GetTickCount()<noticeUntil?notice:"F1 Help   F2 Controls   F5 Save   F8 Load   Slot "+std::to_string(slot));
+ drawText(dc,12,r.bottom-24,GetTickCount()<noticeUntil?notice:"F1 Help   F2 Controls   F5 Save   F8 Load   Slot "+std::to_string(slot?slot:10));
 }
 // Compose the entire frame off-screen, then present it in one operation.
 static void paint(HDC target){
@@ -304,7 +303,7 @@ static LRESULT CALLBACK windowProc(HWND w,UINT m,WPARAM a,LPARAM b){
  case WM_SYSKEYDOWN:if(a==VK_RETURN){fullscreen();return 0;}break;
  case WM_KEYDOWN:
   if(b&(1L<<30))return 0;
-  if(a==VK_F1)help=!help;if(a==VK_F2)openControls();if(a==VK_F5)saveSlot();if(a==VK_F8)loadSlot();
+  if(a==VK_F1)help=!help;if(a==VK_F2)openControls();if(testFrames&&a==VK_F5)saveSlot();if(testFrames&&a==VK_F8)loadSlot();
   if(a==VK_ESCAPE){cheatOpen=false;help=false;releaseActions=true;}return 0;
  case WM_COMMAND:
   if(a==1)openControls();else if(a==2)saveSlot();else if(a==3)loadSlot();else if(a==4)DestroyWindow(w);
@@ -335,15 +334,20 @@ int main(int argc,char**argv){
  for(int p=0;p<2;p++)core.set_controller_port_device(p,RETRO_DEVICE_JOYPAD);
  core.status(state);if(!state[0])return fail("The co-op core did not recognize this cartridge.");
  retro_system_av_info av{};core.get_system_av_info(&av);
+ int desktopKeys[2][16]{};unsigned desktopPads[16]{};
+ for(int p=0;p<2;p++)for(int a=0;a<8;a++)desktopKeys[p][retroIds[a]]=keys[p][a];
+ for(int a=0;a<8;a++)desktopPads[retroIds[a]]=gamepadKeys[0][a];
+ coopdesktop::configure(desktopKeys,desktopPads,{{4,L"Up"},{5,L"Down"},{6,L"Left"},{7,L"Right"},{8,L"Jump"},{0,L"Whip / weapon"},{3,L"Pause"},{10,L"Rejoin"}});
+ for(int p=0;p<2;p++)for(int a=0;a<8;a++)coopdesktop::padKeys[p][retroIds[a]]=coopdesktop::number(p?L"P2Gamepad":L"P1Gamepad",std::to_wstring(retroIds[a]).c_str(),gamepadKeys[p][a]);
+ coopdesktop::setupSaves([](int s){slot=s==10?0:s;return saveSlot();},[](int s){slot=s==10?0:s;return loadSlot();},[](int s){slot=s==10?0:s;});
  if(!testFrames||uiTest){
   SetProcessDPIAware();WNDCLASSA wc{};wc.hInstance=GetModuleHandle(nullptr);wc.lpfnWndProc=windowProc;wc.lpszClassName="IndianaCoop";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);RegisterClassA(&wc);wc.lpfnWndProc=controlsProc;wc.lpszClassName="IndianaControls";wc.hbrBackground=(HBRUSH)(COLOR_BTNFACE+1);RegisterClassA(&wc);
   HMENU menu=CreateMenu(),gameMenu=CreatePopupMenu(),saveMenu=CreatePopupMenu();
-  AppendMenuA(gameMenu,MF_STRING,1,"Controls...\tF2");AppendMenuA(gameMenu,MF_STRING,2,"Save state\tF5");AppendMenuA(gameMenu,MF_STRING,3,"Load state\tF8");AppendMenuA(gameMenu,MF_STRING,5,"Restart cartridge");AppendMenuA(gameMenu,MF_STRING,4,"Exit");
-  for(int s=1;s<=10;s++)AppendMenuA(saveMenu,MF_STRING|(s==1?MF_CHECKED:0),100+s,("Slot "+std::to_string(s%10)).c_str());
-  AppendMenuA(menu,MF_POPUP,(UINT_PTR)gameMenu,"Game");AppendMenuA(menu,MF_POPUP,(UINT_PTR)saveMenu,"Save slot");
+  AppendMenuA(gameMenu,MF_STRING,1,"Controls...\tF2");AppendMenuA(gameMenu,MF_STRING,5,"Restart cartridge");AppendMenuA(gameMenu,MF_STRING,4,"Exit");
+  AppendMenuA(menu,MF_POPUP,(UINT_PTR)gameMenu,"Game");
   HMENU helpMenu=CreatePopupMenu();AppendMenuA(helpMenu,MF_STRING,6,"Download BizHawk...");AppendMenuA(menu,MF_POPUP,(UINT_PTR)helpMenu,"Help");
   windowHandle=CreateWindowA("IndianaCoop","Indiana Jones - Native Co-op",WS_OVERLAPPEDWINDOW|(testFrames?0:WS_VISIBLE),CW_USEDEFAULT,CW_USEDEFAULT,810,930,nullptr,menu,GetModuleHandle(nullptr),nullptr);
-  if(!testFrames)coopdesktop::attach(windowHandle,256,264,openControls);
+  if(!testFrames)coopdesktop::attach(windowHandle,256,264);
   HMODULE xi=LoadLibraryA("xinput1_4.dll");if(!xi)xi=LoadLibraryA("xinput9_1_0.dll");if(xi)getPad=(GetPad)GetProcAddress(xi,"XInputGetState");
   WAVEFORMATEX wf{};wf.wFormatTag=WAVE_FORMAT_PCM;wf.nChannels=2;wf.nSamplesPerSec=(DWORD)av.timing.sample_rate;wf.wBitsPerSample=16;wf.nBlockAlign=4;wf.nAvgBytesPerSec=wf.nSamplesPerSec*4;
   if(!testFrames){if(waveOutOpen(&audioDevice,WAVE_MAPPER,&wf,0,0,CALLBACK_NULL)!=MMSYSERR_NOERROR)message("Audio device unavailable");timeBeginPeriod(1);}
@@ -358,7 +362,7 @@ int main(int argc,char**argv){
  bool saved=false,loaded=false;
  while(running&&(!testFrames||frameNumber<testFrames)){
   MSG msg;while(PeekMessage(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessage(&msg);}if(!running)break;
-  if(controlsWindow){Sleep(15);QueryPerformanceCounter(&now);deadline=double(now.QuadPart)/freq.QuadPart;continue;}
+  if(controlsWindow||coopdesktop::busy()){Sleep(15);QueryPerformanceCounter(&now);deadline=double(now.QuadPart)/freq.QuadPart;continue;}
   readInputs();sound.clear();core.run();core.status(state);
   if(uiTest&&testMenuStart>=0&&frameNumber-testMenuStart==33)snapshotWindow(windowHandle,"diagnostics/native-menu.bmp");
   if(uiTest&&testMenuStart>=0&&frameNumber-testMenuStart==10)snapshotWindow(windowHandle,"diagnostics/native-pause.bmp");
